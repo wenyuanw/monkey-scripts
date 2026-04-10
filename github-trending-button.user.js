@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GitHub Trending Button
 // @namespace    https://github.com/wenyuanw
-// @version      1.1.0
+// @version      1.2.0
 // @description  Add a button to GitHub header to quickly access trending page
 // @author       wenyuan
 // @match        https://github.com/*
@@ -17,47 +17,106 @@
     const TOOLTIP_ID = 'trending-button-tooltip';
 
     function createIcon() {
-        // 使用 GitHub 原生 Graph 图标
+        // 与当前顶栏 octicon 一致（无旧版 Button-visual）
         return `
-            <svg aria-hidden="true" height="16" viewBox="0 0 16 16" version="1.1" width="16" data-view-component="true" class="octicon octicon-graph Button-visual">
+            <svg aria-hidden="true" focusable="false" class="octicon octicon-graph" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" display="inline-block" overflow="visible" style="vertical-align:text-bottom">
                 <path d="M1.5 1.75V13.5h13.75a.75.75 0 0 1 0 1.5H.75a.75.75 0 0 1-.75-.75V1.75a.75.75 0 0 1 1.5 0Zm14.28 2.53-5.25 5.25a.75.75 0 0 1-1.06 0L7 7.06 4.28 9.78a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042l3.25-3.25a.75.75 0 0 1 1.06 0L10 7.94l4.72-4.72a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042Z"></path>
             </svg>
         `;
     }
 
+    /** 新版 Primer 顶栏 vs 旧版 App Header */
+    function findHeaderActionsContainer() {
+        return (
+            document.querySelector('[data-testid="top-nav-right"]') ||
+            document.querySelector('.AppHeader-actions')
+        );
+    }
+
+    /** 插入在通知图标前，与 Issues/PR 等并列 */
+    function findInsertBefore(actionsContainer) {
+        const notifications = actionsContainer.querySelector(
+            'a[href="/notifications"], a[href$="/notifications"]'
+        );
+        if (notifications) return notifications;
+
+        return (
+            actionsContainer.querySelector('notification-indicator') ||
+            actionsContainer.querySelector('.AppHeader-user') ||
+            actionsContainer.querySelector('[data-testid="github-avatar"]')?.closest('button')?.parentElement ||
+            null
+        );
+    }
+
     function addTrendingButton() {
-        // 1. 检查容器是否存在
-        // GitHub Header 的结构可能会变，这里可以尝试多个选择器，或者保持现状
-        const actionsContainer = document.querySelector('.AppHeader-actions');
+        const actionsContainer = findHeaderActionsContainer();
         if (!actionsContainer) return false;
 
-        // 2. 检查按钮是否已存在 (防止重复添加)
         if (document.getElementById(BUTTON_ID)) return true;
 
-        // 3. 创建按钮
         const trendingButton = document.createElement('a');
         trendingButton.id = BUTTON_ID;
         trendingButton.href = '/trending';
-        // 保持原有的样式类，确保视觉统一
-        trendingButton.className = 'Button Button--iconOnly Button--secondary Button--medium AppHeader-button color-fg-muted';
-        trendingButton.setAttribute('aria-label', 'Trending repositories');
+        trendingButton.setAttribute('data-discover', 'true');
+
+        const styleRef =
+            actionsContainer.querySelector('a[href="/issues"], a[href$="/issues"]') ||
+            actionsContainer.querySelector('a[data-component="IconButton"]');
+        if (styleRef) {
+            trendingButton.className = styleRef.className;
+            Array.from(styleRef.attributes).forEach((attr) => {
+                if (
+                    attr.name === 'href' ||
+                    attr.name === 'id' ||
+                    attr.name === 'aria-labelledby'
+                ) {
+                    return;
+                }
+                if (!trendingButton.hasAttribute(attr.name)) {
+                    trendingButton.setAttribute(attr.name, attr.value);
+                }
+            });
+        } else {
+            trendingButton.className =
+                'Button Button--iconOnly Button--secondary Button--medium AppHeader-button color-fg-muted';
+        }
+
+        trendingButton.setAttribute('aria-labelledby', TOOLTIP_ID);
         trendingButton.innerHTML = createIcon();
 
-        // 4. 创建原生 Tooltip (可选，但为了完美还原)
-        const tooltip = document.createElement('tool-tip');
-        tooltip.id = TOOLTIP_ID;
-        tooltip.setAttribute('for', BUTTON_ID);
-        tooltip.setAttribute('popover', 'manual');
-        tooltip.setAttribute('data-direction', 's');
-        tooltip.setAttribute('data-type', 'label');
-        tooltip.setAttribute('data-view-component', 'true');
-        tooltip.className = 'sr-only position-absolute';
-        tooltip.textContent = 'Trending repositories';
+        const isNewHeader = actionsContainer.hasAttribute('data-testid');
+        let tooltip;
+        if (isNewHeader) {
+            tooltip = document.createElement('span');
+            tooltip.id = TOOLTIP_ID;
+            const issuesTip = styleRef?.nextElementSibling;
+            if (
+                issuesTip &&
+                issuesTip.tagName === 'SPAN' &&
+                issuesTip.hasAttribute('popover')
+            ) {
+                tooltip.className = issuesTip.className;
+                const dir = issuesTip.getAttribute('data-direction');
+                if (dir) tooltip.setAttribute('data-direction', dir);
+            } else {
+                tooltip.setAttribute('data-direction', 's');
+            }
+            tooltip.setAttribute('aria-hidden', 'true');
+            tooltip.setAttribute('popover', 'auto');
+            tooltip.textContent = 'Trending repositories';
+        } else {
+            tooltip = document.createElement('tool-tip');
+            tooltip.id = TOOLTIP_ID;
+            tooltip.setAttribute('for', BUTTON_ID);
+            tooltip.setAttribute('popover', 'manual');
+            tooltip.setAttribute('data-direction', 's');
+            tooltip.setAttribute('data-type', 'label');
+            tooltip.setAttribute('data-view-component', 'true');
+            tooltip.className = 'sr-only position-absolute';
+            tooltip.textContent = 'Trending repositories';
+        }
 
-        // 5. 插入元素
-        // 尝试插在通知图标前面 (notification-indicator) 或者头像前面
-        const refNode = actionsContainer.querySelector('notification-indicator') || actionsContainer.querySelector('.AppHeader-user');
-
+        const refNode = findInsertBefore(actionsContainer);
         if (refNode) {
             actionsContainer.insertBefore(trendingButton, refNode);
             actionsContainer.insertBefore(tooltip, refNode);
